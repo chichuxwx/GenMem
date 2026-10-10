@@ -1,7 +1,9 @@
 <div align="center">
+  
 # GenMem
 
 ### Generative Symbolic Memory for Self-Evolving Harness
+
 [![Paper](https://img.shields.io/badge/arXiv-2609.34633-b31b1b.svg)](https://arxiv.org/abs/2609.34633)
 [![Figure PDF](https://img.shields.io/badge/Figure-PDF-blue.svg)](assets/GenMen_method%284%29%281%29.pdf)
 [![Models and codebook](https://img.shields.io/badge/Hugging%20Face-Models%20%26%20Codebook-ffcc4d.svg)](https://huggingface.co/chuchuxwx/GenMem)
