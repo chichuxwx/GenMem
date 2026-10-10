@@ -1,44 +1,132 @@
 # GenMem
 
-Code for semantic-ID memory retrieval and evolution. Model weights and the four-layer codebook are available on [Hugging Face](https://huggingface.co/chuchuxwx/GenMem).
+### Generative Symbolic Memory for Self-Evolving Harness
+
+Official implementation of [GenMem](https://arxiv.org/pdf/2609.34633). GenMem assigns stable, four-token symbolic identifiers (SIDs) to reusable experiences. MemRetriever retrieves experience through these addresses, while MemEvolver updates the experience stored at an address without changing the address itself.
 
 ![GenMem method](assets/method.png)
 
-[Figure PDF](assets/GenMen_method%284%29%281%29.pdf)
+[![Paper](https://img.shields.io/badge/arXiv-2609.34633-b31b1b.svg)](https://arxiv.org/abs/2609.34633)
+[![Figure PDF](https://img.shields.io/badge/Figure-PDF-blue.svg)](assets/GenMen_method%284%29%281%29.pdf)
+[![Models and codebook](https://img.shields.io/badge/Hugging%20Face-Models%20%26%20Codebook-ffcc4d.svg)](https://huggingface.co/chuchuxwx/GenMem)
 
-## Quick start
+## Repository layout
+
+```text
+embedding/       Experience embeddings
+quantization/    Weighted RQ-KMeans, codebooks, and memory-to-SID encoding
+training/pt/     SID alignment and summary-continuation data preparation
+training/mt/     MemRetriever and MemEvolver CoT mid-training data
+training/rl/     GRPO data, rewards, tool loops, and verl overrides
+third_party/verl/ Source-only verl snapshot with the training modifications
+evolution/       Offline MemR -> solver -> MemE memory evolution
+configs/         SID, PT, and MT configurations
+```
+
+Download [MemRetriever, MemEvolver, and the 48 × 16 × 8 × 8 codebook](https://huggingface.co/chuchuxwx/GenMem) from Hugging Face. To train the task-solving server model, follow [Harness-RL](https://github.com/jiangxinke/Harness-RL), the framework used in our experiments.
+
+## Installation
+
+Use Python 3.10+ and a PyTorch build compatible with your CUDA driver:
 
 ```bash
+git clone https://github.com/chichuxwx/GenMem.git
+cd GenMem
 pip install -r requirements.txt
-hf download chuchuxwx/GenMem --include 'codebook/*' --local-dir quantization
-python -m quantization.encode_memory --memory 'Your reusable experience' --device cuda
 ```
 
-This maps a memory text to a four-token SID. The released codebook has sizes **48 × 16 × 8 × 8**. The embedding model is downloaded automatically on first use.
+For PT/MT, install the pinned LlamaFactory version in `requirements-pt.txt`. For GRPO, install `requirements-rl.txt`, which uses the cleaned, modified verl source in `third_party/verl/`. Use separate training environments; see [installation and training instructions](training/README.md). Offline evolution requires a task-solving model or service; the paper's server-model training uses Harness-RL.
 
-## Train from your own data
+## Use the released codebook
 
-The main entry points are:
-
-| Stage | Code |
-| --- | --- |
-| Experience embeddings | [`embedding/build_embeddings.py`](embedding/build_embeddings.py) |
-| RQ-KMeans codebook | [`quantization/train_rqk.py`](quantization/train_rqk.py) |
-| SID pretraining | [`training/pt/`](training/pt/) and [`configs/pt.yaml`](configs/pt.yaml) |
-| MemR / MemE CoT mid-training | [`training/mt/`](training/mt/) and [`configs/`](configs/) |
-| MemR / MemE GRPO | [`training/rl/`](training/rl/) |
-| Offline memory evolution | [`evolution/offline_evo.py`](evolution/offline_evo.py) |
-
-For example, to build a new codebook from a private JSONL file with `sample_id` and `experience_text` fields:
+Download only the small codebook files; the encoder downloads the pinned Qwen3-Embedding-0.6B model on first use:
 
 ```bash
-python -m embedding.build_embeddings --input experiences.jsonl --output embeddings.jsonl --device cuda
-python -m quantization.train_rqk --input embeddings.jsonl --output codebook
+hf download chuchuxwx/GenMem --include 'codebook/*' --local-dir quantization
+python -m quantization.encode_memory \
+  --memory 'When a tool fails, inspect the error and retry with corrected arguments.' \
+  --device cuda
 ```
 
-PT and MT use [LlamaFactory](https://github.com/hiyouga/LLaMA-Factory). GRPO uses a compatible [verl](https://github.com/volcengine/verl) checkout with the files in `training/rl/verl_overrides/` applied. Set the model, dataset, memory-bank, and solver paths in the configs before running them. The offline evolution CLI lists its options with `python evolution/offline_evo.py --help`.
+The output contains four SID codes and their token string. Keep the released embedding model, instruction, and codebooks together: training a new codebook changes the SID assignment.
 
-Training data, memory banks, trajectories, and solver services are not included.
+## Train with your own data
+
+The stages below are the experiment entry points. Replace the example paths with your own data and edit the paths in `configs/` before training.
+
+### 1. Build embeddings and SIDs
+
+`experiences.jsonl` contains one `{"sample_id": "...", "experience_text": "..."}` object per line:
+
+```bash
+python -m embedding.build_embeddings \
+  --input private_data/experiences.jsonl \
+  --output private_data/embeddings.jsonl --device cuda
+python -m quantization.train_rqk \
+  --input private_data/embeddings.jsonl --output artifacts/codebook
+```
+
+This writes four codebooks, `config.json`, and `sid_mapping.json`. To continue with a new SID vocabulary, use `training/pt/expand_sid_vocab.py` and `configs/sid_vocab.json`.
+
+### 2. SID alignment pretraining
+
+`training/pt/prepare_stage_a_raw_bidir_pt.py` builds bidirectional text↔SID examples and a LlamaFactory `dataset_info.json`. It expects the three prepared source files named in `SOURCE_SPECS`, plus a general-text JSON file. The released training config then runs with:
+
+```bash
+llamafactory-cli train configs/pt.yaml
+```
+
+Next, merge experiences sharing a SID with `training/pt/merge_memory_bank.py`. The script includes the Qwen3-32B summarization prompt, concurrent requests, and resumable checkpoints. Use `training/pt/build_summary_data.py` to construct summary ↔ SID examples, then train with `configs/summary_initial.yaml`. For summaries produced in later batches, use `configs/summary.yaml`. Follow the [summary preparation guide](training/pt/README.md) for commands and dataset registration.
+
+### 3. MemRetriever / MemEvolver CoT mid-training
+
+We use **DeepSeek V4 Flash** to generate the CoT supervision. First, prepare teacher inputs from your raw and merged memory banks:
+
+```bash
+python training/mt/build_cot_generation_inputs.py \
+  --raw-bank private_data/raw_bank.json \
+  --merged-bank private_data/merged_bank.json \
+  --memr-output private_data/memr_teacher_input.json \
+  --meme-output private_data/meme_teacher_input.json
+```
+
+For **MemRetriever**, use two teacher calls per example: generate `thinking` for the query, then generate `rewritten_exp` conditioned on the query and retrieved experience. For **MemEvolver**, generate `thinking` from the query and execution trajectory; retain the merged summary as the `evo_exp` target. MemE examples cover both updating an existing experience and filling an empty SID.
+
+Use `training/mt/generate_teacher_cot.py` for concurrent teacher requests and resume support. It retains the original `source_index` and input fields. The two `stitch_*` scripts recover SIDs and assemble tool-call conversations; then run `retarget_memr_rl_prompt.py` to align MemR with its RL prompt. Follow the [MT data guide](training/mt/README.md) for the output schema, assembly commands, validation, and LlamaFactory dataset registration. Train the resulting datasets with `configs/mt_memr.yaml` and `configs/mt_meme.yaml`.
+
+### 4. GRPO post-training
+
+`training/rl/build_training_data.py` and `training/rl/build_meme_training_data.py` prepare the two RL datasets. The launchers are `training/rl/run_memr.sh` and `training/rl/run_meme.sh`. They require MT checkpoints, a memory bank, a patched verl environment, and an external task-outcome service. See `training/rl/config/local_config_v33.sh` for the required environment variables; no credentials are stored here.
+
+## Offline memory evolution
+
+The offline loop runs MemRetriever, passes its retrieved experience to a solver, then applies gated MemEvolver updates and saves memory-bank snapshots. With a local OpenAI-compatible solver, a starting bank, and the released agent checkpoints:
+
+```bash
+hf download chuchuxwx/GenMem --include 'memr/*' 'meme/*' --local-dir models
+export SP_BACKEND=direct_llm
+export DIRECT_LLM_URL=http://127.0.0.1:8000/v1
+export DIRECT_LLM_MODEL=your-solver-model
+python evolution/offline_evo.py \
+  --dataset private_data/queries.jsonl \
+  --memory_bank private_data/memory_bank.json \
+  --memr_model models/memr --meme_model models/meme \
+  --output_dir outputs/evolution --num_iters 3 \
+  --inference_backend transformers --tensor_parallel_size 1
+```
+
+The query file accepts JSON/JSONL rows with `question`, optional `ground_truth_answer`, and `dataset`. For a minimal starting bank, `memory_bank.json` may be a JSON object mapping a complete four-token SID to its experience text. `python evolution/offline_evo.py --help` lists beam retrieval, reranking, lazy updates, and resume options. The `direct_llm` adapter is a portable way to run the loop; reproducing paper results requires the corresponding task harness and server model.
+
+## Citation
+
+```bibtex
+@article{jiang2026genmem,
+  title={GenMem: Generative Symbolic Memory for Self-Evolving Harness},
+  author={Jiang, Xinke and Feng, Tao and Xu, Weixuan and Zhang, Zhixin and Yang, Zhibang and Zhang, Wentao and Zhu, Runchuan and Chu, Xu and Zhao, Junfeng and Wang, Yasha},
+  journal={arXiv preprint arXiv:2609.34633},
+  year={2026}
+}
+```
 
 ## License
 
