@@ -1,5 +1,5 @@
 # Core versions observed in the PT/MT environment; use Python 3.12.
-llamafactory @ git+https://github.com/hiyouga/LlamaFactory.git@e67ab9e2f2c924a459b8586e3370b01dd5734b36
+-e ./LlamaFactory
 torch==2.10.0
 transformers==5.2.0
 accelerate==1.11.0

@@ -19,14 +19,18 @@ GenMem assigns stable, four-token symbolic identifiers (SIDs) to reusable experi
 ## Repository layout
 
 ```text
-embedding/       Experience embeddings
-quantization/    Weighted RQ-KMeans, codebooks, and memory-to-SID encoding
-training/pt/     SID alignment and summary-continuation data preparation
-training/mt/     MemRetriever and MemEvolver CoT mid-training data
-training/rl/     GRPO data, rewards, tool loops, and verl overrides
-third_party/verl/ Source-only verl snapshot with the training modifications
-evolution/       Offline MemR -> solver -> MemE memory evolution
-configs/         SID, PT, and MT configurations
+embedding/               Experience embeddings
+quantization/            Weighted RQ-KMeans and memory-to-SID encoding
+LlamaFactory/
+  src/                   Fixed-version LlamaFactory source
+  pt/                    SID alignment and summary preparation
+  mt/                    CoT generation and mid-training data
+  configs/               PT, summary, MT, and DeepSpeed configurations
+verl/
+  verl/                  Modified verl training source
+  recipe/genmem/         GRPO data, rewards, tool loops, and launchers
+evolution/               Offline MemR -> solver -> MemE memory evolution
+configs/                 Shared SID and prompt configurations
 ```
 
 Download [MemRetriever, MemEvolver, and the 48 × 16 × 8 × 8 codebook](https://huggingface.co/chuchuxwx/GenMem) from Hugging Face. To train the task-solving server model, follow [Harness-RL](https://github.com/jiangxinke/Harness-RL), the framework used in our experiments.
@@ -41,7 +45,7 @@ cd GenMem
 pip install -r requirements.txt
 ```
 
-For PT/MT, install the pinned LlamaFactory version in `requirements-pt.txt`. For GRPO, install `requirements-rl.txt`, which uses the cleaned, modified verl source in `third_party/verl/`. Use separate training environments; see [installation and training instructions](training/README.md). Offline evolution requires a task-solving model or service; the paper's server-model training uses Harness-RL.
+Both training frameworks are included as source. For PT/MT, `requirements-pt.txt` installs the local `LlamaFactory/` package; for GRPO, `requirements-rl.txt` installs the local `verl/` package. Use separate training environments; see [installation and training instructions](docs/TRAINING.md). Offline evolution requires a task-solving model or service; the paper's server-model training uses Harness-RL.
 
 ## Use the released codebook
 
@@ -58,7 +62,7 @@ The output contains four SID codes and their token string. Keep the released emb
 
 ## Train with your own data
 
-The stages below are the experiment entry points. Replace the example paths with your own data and edit the paths in `configs/` before training.
+Run the commands below from the GenMem repository root. Replace example data and checkpoint paths in `LlamaFactory/configs/` for PT/MT, or configure `verl/recipe/genmem/config/` for GRPO.
 
 ### 1. Build embeddings and SIDs
 
@@ -72,24 +76,24 @@ python -m quantization.train_rqk \
   --input private_data/embeddings.jsonl --output artifacts/codebook
 ```
 
-This writes four codebooks, `config.json`, and `sid_mapping.json`. To continue with a new SID vocabulary, use `training/pt/expand_sid_vocab.py` and `configs/sid_vocab.json`.
+This writes four codebooks, `config.json`, and `sid_mapping.json`. To continue with a new SID vocabulary, use `LlamaFactory/pt/expand_sid_vocab.py` and `configs/sid_vocab.json`.
 
 ### 2. SID alignment pretraining
 
-`training/pt/prepare_stage_a_raw_bidir_pt.py` builds bidirectional text↔SID examples and a LlamaFactory `dataset_info.json`. It expects the three prepared source files named in `SOURCE_SPECS`, plus a general-text JSON file. The released training config then runs with:
+`LlamaFactory/pt/prepare_stage_a_raw_bidir_pt.py` builds bidirectional text↔SID examples and a LlamaFactory `dataset_info.json`. It expects the three prepared source files named in `SOURCE_SPECS`, plus a general-text JSON file. The released training config then runs with:
 
 ```bash
-llamafactory-cli train configs/pt.yaml
+llamafactory-cli train LlamaFactory/configs/pt.yaml
 ```
 
-Next, merge experiences sharing a SID with `training/pt/merge_memory_bank.py`. The script includes the Qwen3-32B summarization prompt, concurrent requests, and resumable checkpoints. Use `training/pt/build_summary_data.py` to construct summary ↔ SID examples, then train with `configs/summary_initial.yaml`. For summaries produced in later batches, use `configs/summary.yaml`. Follow the [summary preparation guide](training/pt/README.md) for commands and dataset registration.
+Next, merge experiences sharing a SID with `LlamaFactory/pt/merge_memory_bank.py`. The script includes the Qwen3-32B summarization prompt, concurrent requests, and resumable checkpoints. Use `LlamaFactory/pt/build_summary_data.py` to construct summary ↔ SID examples, then train with `LlamaFactory/configs/summary_initial.yaml`. For summaries produced in later batches, use `LlamaFactory/configs/summary.yaml`. Follow the [summary preparation guide](LlamaFactory/pt/README.md) for commands and dataset registration.
 
 ### 3. MemRetriever / MemEvolver CoT mid-training
 
 We use **DeepSeek V4 Flash** to generate the CoT supervision. First, prepare teacher inputs from your raw and merged memory banks:
 
 ```bash
-python training/mt/build_cot_generation_inputs.py \
+python LlamaFactory/mt/build_cot_generation_inputs.py \
   --raw-bank private_data/raw_bank.json \
   --merged-bank private_data/merged_bank.json \
   --memr-output private_data/memr_teacher_input.json \
@@ -98,11 +102,11 @@ python training/mt/build_cot_generation_inputs.py \
 
 For **MemRetriever**, use two teacher calls per example: generate `thinking` for the query, then generate `rewritten_exp` conditioned on the query and retrieved experience. For **MemEvolver**, generate `thinking` from the query and execution trajectory; retain the merged summary as the `evo_exp` target. MemE examples cover both updating an existing experience and filling an empty SID.
 
-Use `training/mt/generate_teacher_cot.py` for concurrent teacher requests and resume support. It retains the original `source_index` and input fields. The two `stitch_*` scripts recover SIDs and assemble tool-call conversations; then run `retarget_memr_rl_prompt.py` to align MemR with its RL prompt. Follow the [MT data guide](training/mt/README.md) for the output schema, assembly commands, validation, and LlamaFactory dataset registration. Train the resulting datasets with `configs/mt_memr.yaml` and `configs/mt_meme.yaml`.
+Use `LlamaFactory/mt/generate_teacher_cot.py` for concurrent teacher requests and resume support. It retains the original `source_index` and input fields. The two `stitch_*` scripts recover SIDs and assemble tool-call conversations; then run `retarget_memr_rl_prompt.py` to align MemR with its RL prompt. Follow the [MT data guide](LlamaFactory/mt/README.md) for the output schema, assembly commands, validation, and LlamaFactory dataset registration. Train the resulting datasets with `LlamaFactory/configs/mt_memr.yaml` and `LlamaFactory/configs/mt_meme.yaml`.
 
 ### 4. GRPO post-training
 
-`training/rl/build_training_data.py` and `training/rl/build_meme_training_data.py` prepare the two RL datasets. The launchers are `training/rl/run_memr.sh` and `training/rl/run_meme.sh`. They require MT checkpoints, a memory bank, a patched verl environment, and an external task-outcome service. See `training/rl/config/local_config_v33.sh` for the required environment variables; no credentials are stored here.
+`verl/recipe/genmem/build_training_data.py` and `verl/recipe/genmem/build_meme_training_data.py` prepare the two RL datasets. The launchers are `verl/recipe/genmem/run_memr.sh` and `verl/recipe/genmem/run_meme.sh`. They require MT checkpoints, a memory bank, a patched verl environment, and an external task-outcome service. See `verl/recipe/genmem/config/local_config_v33.sh` for the required environment variables; no credentials are stored here.
 
 ## Offline memory evolution
 

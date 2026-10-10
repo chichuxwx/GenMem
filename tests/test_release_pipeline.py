@@ -1,6 +1,8 @@
 import ast
 import copy
 import json
+import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -11,7 +13,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "training/pt"), str(ROOT / "training/mt")]
+sys.path[:0] = [str(ROOT / "LlamaFactory/pt"), str(ROOT / "LlamaFactory/mt")]
 import build_summary_data as summary
 import generate_teacher_cot as teacher
 import merge_memory_bank as merge
@@ -56,7 +58,7 @@ class SummaryTest(unittest.TestCase):
             source, output = root / "raw.json", root / "merged.json"
             record = {"sid": {"tokens": SID}, "experience_text": "Reusable technique", "embedding": [1]}
             source.write_text(json.dumps([record]))
-            command = [sys.executable, str(ROOT / "training/pt/merge_memory_bank.py"), "--input", str(source), "--output", str(output)]
+            command = [sys.executable, str(ROOT / "LlamaFactory/pt/merge_memory_bank.py"), "--input", str(source), "--output", str(output)]
             for _ in range(2):
                 result = subprocess.run(command, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -89,7 +91,7 @@ class TeacherTest(unittest.TestCase):
     def test_memr_has_two_calls_without_source_mutation(self):
         row = {"query": "Question", "experience": "Technique", "trajectory": "Execution"}
         original = copy.deepcopy(row)
-        prompts = json.loads((ROOT / "training/mt/teacher_prompts.json").read_text())
+        prompts = json.loads((ROOT / "LlamaFactory/mt/teacher_prompts.json").read_text())
         with patch.object(teacher, "request_field", side_effect=["Need relevant techniques", "Adapted technique"]) as call:
             result = teacher.generate_record(3, row, SimpleNamespace(agent="memretriever"), prompts)
         self.assertEqual(call.call_count, 2)
@@ -100,7 +102,7 @@ class TeacherTest(unittest.TestCase):
 
     def test_meme_keeps_evolution_target_and_empty_observation(self):
         row = {"query": "Question", "experience": "", "trajectory": "Execution", "evo_exp": "Merged reusable skill"}
-        prompts = json.loads((ROOT / "training/mt/teacher_prompts.json").read_text())
+        prompts = json.loads((ROOT / "LlamaFactory/mt/teacher_prompts.json").read_text())
         with patch.object(teacher, "request_field", return_value="Trajectory analysis") as call:
             result = teacher.generate_record(0, row, SimpleNamespace(agent="memevolver"), prompts)
         self.assertEqual(call.call_count, 1)
@@ -125,7 +127,7 @@ class TeacherTest(unittest.TestCase):
 
 class PromptTest(unittest.TestCase):
     def test_mt_rl_prompt_matches(self):
-        tree = ast.parse((ROOT / "training/rl/build_training_data.py").read_text())
+        tree = ast.parse((ROOT / "verl/recipe/genmem/build_training_data.py").read_text())
         values = [ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
                   and any(isinstance(t, ast.Name) and t.id == "SYSTEM_PROMPT" for t in node.targets)]
         self.assertEqual(values, [retarget.RL_SYSTEM_PROMPT])
@@ -167,6 +169,30 @@ class AssemblyTest(unittest.TestCase):
                 self.assertEqual(stats["output_records"], 1)
                 self.assertEqual(rows[0]["conversations"][-1]["value"], "<answer>\n" + source["evo_exp"] + "\n</answer>")
                 self.assertIn(SID, rows[0]["conversations"][2]["value"])
+
+
+class LayoutTest(unittest.TestCase):
+    def test_training_configs_resolve_from_repository_root(self):
+        for path in (ROOT / "LlamaFactory/configs").glob("*.yaml"):
+            match = re.search(r"^deepspeed:\s*(\S+)", path.read_text(), re.M)
+            self.assertIsNotNone(match, str(path))
+            self.assertTrue((ROOT / match.group(1)).is_file(), str(path))
+        self.assertIn("-e ./LlamaFactory", (ROOT / "requirements-pt.txt").read_text())
+        self.assertIn("-e ./verl", (ROOT / "requirements-rl.txt").read_text())
+
+    def test_rl_launcher_default_paths_after_move(self):
+        env = dict(os.environ)
+        env.pop("VERL_ROOT", None)
+        env.pop("TOOL_CONFIG", None)
+        for name in ("MODEL_PATH", "TRAIN_DATA_PATH", "TEST_DATA_PATH", "MEMORY_BANK_PATH", "SID_CONFIG_PATH", "DEERFLOW_BASE_URL", "DEERFLOW_MODEL", "DEERFLOW_EMAIL", "DEERFLOW_PASSWORD"):
+            env[name] = "test-only-placeholder"
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1"; printf "%s\\n" "$REPO_DIR" "$PROJECT_DIR" "$RL_DIR" "$TOOL_CONFIG"', "test", str(ROOT / "verl/recipe/genmem/config/local_config_v33.sh")],
+            env=env, capture_output=True, text=True, cwd="/tmp",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        resolved = [Path(line).resolve() for line in result.stdout.splitlines()]
+        self.assertEqual(resolved, [ROOT, ROOT / "verl", ROOT / "verl/recipe/genmem", ROOT / "verl/recipe/genmem/config/mem_tool_config_48_16_8_8.yaml"])
 
 
 if __name__ == "__main__":

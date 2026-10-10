@@ -1,1 +1,3 @@
-third_party/verl/** -whitespace linguist-vendored=true
+verl/** -whitespace linguist-vendored=true
+verl/recipe/genmem/** linguist-vendored=false
+LlamaFactory/src/** -whitespace linguist-vendored=true
