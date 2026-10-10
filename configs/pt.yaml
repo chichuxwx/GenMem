@@ -1,0 +1,37 @@
+model_name_or_path: ./artifacts/base_sid
+trust_remote_code: true
+flash_attn: fa2
+disable_gradient_checkpointing: false
+
+stage: pt
+do_train: true
+finetuning_type: full
+deepspeed: configs/zero3.json
+
+dataset_dir: ./private_data
+dataset: sid_stage_a_raw_bidir_pt_48_16_8_8_w0p5,nemotron_general_pt_48_16_8_8_w0p5
+mix_strategy: interleave_over
+interleave_probs: 0.85,0.15
+cutoff_len: 4096
+packing: false
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+output_dir: ./artifacts/pt
+logging_steps: 10
+save_steps: 2000
+save_total_limit: 2
+plot_loss: true
+overwrite_output_dir: false
+save_only_model: false
+report_to: none
+
+per_device_train_batch_size: 3
+gradient_accumulation_steps: 2
+learning_rate: 1.0e-5
+num_train_epochs: 1
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+ddp_timeout: 180000000
+resume_from_checkpoint: null

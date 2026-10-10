@@ -1,0 +1,5 @@
+- name: meme_tool_agent
+  _target_: think_capped_agent_loop.ThinkCappedToolAgentLoop
+  think_max_tokens: 1280
+  post_tool_think_max_tokens: 768
+  post_tool_answer_reserve_tokens: 3584

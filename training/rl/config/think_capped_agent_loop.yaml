@@ -1,0 +1,4 @@
+- name: think_capped_tool_agent
+  _target_: think_capped_agent_loop.ThinkCappedToolAgentLoop
+  think_max_tokens: 2048
+  post_tool_answer_reserve_tokens: 1024

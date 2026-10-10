@@ -1,0 +1,21 @@
+tools:
+  - class_name: verl.tools.memory_tool_four_level.MemoryToolFourLevel
+    config:
+      type: native
+      memory_bank_path: ${oc.env:MEMORY_BANK_PATH}
+      sid_config_path: ${oc.env:SID_CONFIG_PATH}
+      top_k: 1
+    tool_schema:
+      type: function
+      function:
+        name: memory_lookup
+        description: Look up reusable experience with one complete four-layer SID.
+        parameters:
+          type: object
+          properties:
+            sid_list:
+              type: array
+              items: {type: string}
+              minItems: 1
+              maxItems: 1
+          required: [sid_list]

@@ -1,0 +1,10 @@
+numpy>=1.26,<3
+torch>=2.5
+transformers>=4.51,<5
+faiss-cpu>=1.8
+huggingface_hub>=0.36
+requests>=2.32
+omegaconf>=2.3
+pyarrow>=17
+pandas>=2.0
+openai>=1.0

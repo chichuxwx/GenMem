@@ -1,0 +1,16 @@
+{
+  "codebook_sizes": [48, 16, 8, 8],
+  "embedding_dim": 1024,
+  "spherical_weight_per_level": [0.5, 0.5, 0.5, 0.5],
+  "distance": "(1-w)*squared_euclidean + w*(1-cosine)",
+  "residual_update": "residual - selected_center; no per-level renormalization",
+  "embedding": {
+    "model": "Qwen/Qwen3-Embedding-0.6B",
+    "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+    "instruction": "Instruct: Encode the following agent experience as a reusable problem-solving memory for semantic retrieval and SID clustering. Focus on the problem type, reusable skill, preconditions, procedure, decision rules, verification checks, outcome, and failure recovery. Prefer semantic problem-solving patterns over dataset names, run ids, wording artifacts, or incidental entities unless they are essential to the skill.\nQuery: ",
+    "max_length": 8192,
+    "pooling": "last EOS if present, otherwise last token; one text per forward pass",
+    "normalization": "L2 before quantization",
+    "dtype": "float16 on CUDA; float32 on CPU"
+  }
+}
