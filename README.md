@@ -33,7 +33,7 @@ evolution/               Offline MemR -> solver -> MemE memory evolution
 configs/                 Shared SID and prompt configurations
 ```
 
-Download [MemRetriever, MemEvolver, and the 48 × 16 × 8 × 8 codebook](https://huggingface.co/chuchuxwx/GenMem) from Hugging Face. To train the task-solving server model, follow [Harness-RL](https://github.com/jiangxinke/Harness-RL), the framework used in our experiments.
+Download [MemRetriever, MemEvolver, the 48 × 16 × 8 × 8 codebook, and the QA/ALFWorld/WebShop server LoRAs](https://huggingface.co/chuchuxwx/GenMem) from Hugging Face. To train the task-solving server model, follow [Harness-RL](https://github.com/jiangxinke/Harness-RL), the framework used in our experiments.
 
 ## Installation
 
@@ -109,6 +109,10 @@ Use `LlamaFactory/mt/generate_teacher_cot.py` for concurrent teacher requests an
 `verl/recipe/genmem/build_training_data.py` and `verl/recipe/genmem/build_meme_training_data.py` prepare the two RL datasets. The launchers are `verl/recipe/genmem/run_memr.sh` and `verl/recipe/genmem/run_meme.sh`. They require MT checkpoints, a memory bank, a patched verl environment, and an external task-outcome service. See `verl/recipe/genmem/config/local_config_v33.sh` for the required environment variables; no credentials are stored here.
 
 ## Offline memory evolution
+
+The released [QA/search server LoRA](https://huggingface.co/chuchuxwx/GenMem/tree/main/server_qa_lora) is checkpoint 159 on **Qwen2.5-7B-Instruct** (rank 16, alpha 32). Load it with the base tokenizer and route StackPlanner2's Central actor to the adapted model; specialist roles use the frozen base. See the [adapter loading guide](https://huggingface.co/chuchuxwx/GenMem/blob/main/server_qa_lora/README.md). It is separate from the Qwen3-8B MemRetriever and MemEvolver.
+
+Interactive adapters share the same base and LoRA dimensions: [ALFWorld step 65](https://huggingface.co/chuchuxwx/GenMem/blob/main/server_alfworld_lora/README.md) runs as **Interactor** with Central frozen; [WebShop step 66](https://huggingface.co/chuchuxwx/GenMem/blob/main/server_webshop_lora/README.md) uses **Central** in historical evaluation. The WebShop guide documents the training-harness provenance limitation. Follow each adapter's loading and routing instructions rather than swapping roles between tasks.
 
 The offline loop runs MemRetriever, passes its retrieved experience to a solver, then applies gated MemEvolver updates and saves memory-bank snapshots. With a local OpenAI-compatible solver, a starting bank, and the released agent checkpoints:
 
